@@ -11,8 +11,7 @@ from calendar_notifications import build_notification_calendar
 from ipo_data import load_ipo_data
 from ipo_performance import render_ipo_performance
 from ipo_reference_prices import REFERENCE_PRICES
-from openai_estimates import estimate_ipo_price, load_estimates
-from rakuten_ipo import RAKUTEN_IPO_URL, load_rakuten_ipos
+from rakuten_ipo import load_rakuten_ipos
 
 
 def parse_date(value):
@@ -59,9 +58,6 @@ def required_funds(item):
     reference = item.get("reference_price", {})
     if reference.get("price"):
         return int(reference["price"]) * 100, "想定価格"
-    ai_estimate = item.get("ai_estimate", {})
-    if ai_estimate.get("status") == "estimated" and ai_estimate.get("estimated_price_yen"):
-        return int(ai_estimate["estimated_price_yen"]) * 100, "AI参考価格"
     return None, "価格未定"
 
 
@@ -218,10 +214,25 @@ def render_detail_cards(items, today_value):
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
-st.set_page_config(page_title="楽天証券 IPOカレンダー", page_icon="🗓️", layout="wide")
+st.set_page_config(page_title="IPOスケジュールナビ", page_icon="🗓️", layout="wide")
 st.markdown(
     """
     <style>
+      .stApp {background:linear-gradient(180deg,#f4fbfc 0,#ffffff 360px);}
+      h1 {color:#083344 !important;letter-spacing:.02em;}
+      h2, h3 {color:#164e63 !important;}
+      h2 {border-left:6px solid #0f766e;padding-left:10px;}
+      div[data-testid="stSidebar"] {background:linear-gradient(180deg,#e6f7f6,#f8fafc);border-right:1px solid #b9dfdc;}
+      div[data-testid="stSidebar"] h1, div[data-testid="stSidebar"] h2,
+      div[data-testid="stSidebar"] h3 {border-left:0;color:#0f4c5c !important;}
+      div[data-testid="stMetric"] {background:#ffffff;border:1px solid #c9e5e3;border-top:4px solid #0f766e;border-radius:12px;padding:.75rem 1rem;box-shadow:0 3px 10px rgba(15,118,110,.08);}
+      div[data-testid="stExpander"] {background:#ffffff;border:1px solid #c9e5e3;border-radius:12px;box-shadow:0 2px 8px rgba(15,23,42,.05);}
+      .stButton > button {border-radius:10px;border:1px solid #0f766e;color:#0f5f59;font-weight:700;}
+      .stButton > button:hover {border-color:#ea580c;color:#c2410c;background:#fff7ed;}
+      .stDownloadButton > button {border:0;border-radius:10px;background:linear-gradient(135deg,#0f766e,#0891b2);color:white;font-weight:800;box-shadow:0 4px 10px rgba(15,118,110,.22);}
+      .stDownloadButton > button:hover {background:linear-gradient(135deg,#115e59,#0e7490);color:white;}
+      div[data-testid="stDataFrame"] {border:1px solid #d7e7e5;border-radius:10px;overflow:hidden;}
+      hr {border-color:#cfe5e3 !important;}
       @media (max-width: 700px) {
         .stMainBlockContainer {padding:1rem .65rem 3rem;}
         h1 {font-size:1.55rem !important;line-height:1.25 !important;}
@@ -236,11 +247,10 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.title("🗓️ 楽天証券 IPOカレンダー")
+st.title("🗓️ IPOスケジュールナビ")
 st.caption("楽天証券で取り扱う日本株IPOだけを表示します。公式データを1日1回確認します。")
 
-force_refresh = st.button("🔄 今すぐ楽天証券を確認")
-rakuten = load_rakuten_ipos(force_refresh=force_refresh)
+rakuten = load_rakuten_ipos(force_refresh=False)
 with st.expander("🔔 iPhoneへIPO通知を追加"):
     st.write("ブックビルディング、価格決定、購入申込、上場日の各日程を登録し、前日と当日の朝9時に通知します。")
     st.download_button(
@@ -251,29 +261,8 @@ with st.expander("🔔 iPhoneへIPO通知を追加"):
         width="stretch",
     )
     st.caption("iPhoneでダウンロードしたファイルを開き、『すべて追加』を押してください。新しいIPOが増えたら、もう一度追加してください。")
-jpx = load_ipo_data(force_refresh=force_refresh)
+jpx = load_ipo_data(force_refresh=False)
 jpx_by_code = {item["code"]: item for item in jpx["items"]}
-ai_estimates = load_estimates()
-try:
-    openai_api_key = str(st.secrets.get("OPENAI_API_KEY", "")).strip()
-except Exception:
-    openai_api_key = ""
-if openai_api_key:
-    st.success("OpenAI APIキー：設定済み")
-else:
-    with st.expander("🔑 AI参考価格の設定"):
-        session_api_key = st.text_input(
-            "OpenAI APIキー",
-            type="password",
-            key="session_openai_api_key",
-            placeholder="新しく再発行したキーを入力",
-            help="入力したキーはファイルへ保存せず、このブラウザセッション中だけ使用します。",
-        ).strip()
-        if session_api_key:
-            openai_api_key = session_api_key
-            st.success("APIキーを一時設定しました")
-        else:
-            st.caption("先ほど公開したキーではなく、再発行したキーを入力してください。")
 items = []
 for row in rakuten["items"]:
     jpx_item = jpx_by_code.get(row["code"], {})
@@ -283,7 +272,6 @@ for row in rakuten["items"]:
         "approval_date": jpx_item.get("approval_date", ""),
         "outline_url": jpx_item.get("outline_url", ""),
         "reference_price": REFERENCE_PRICES.get(row["code"], {}),
-        "ai_estimate": ai_estimates.get(row["code"], {}),
     })
 
 if rakuten["error"]:
@@ -332,17 +320,17 @@ fund_limits = {
     "50万円以下": 500_000,
     "100万円以下": 1_000_000,
 }
-selected_fund_label = st.selectbox("100株の必要資金", list(fund_limits))
-selected_fund_limit = fund_limits[selected_fund_label]
-if selected_fund_limit is not None:
-    st.caption("公開価格・仮条件・想定価格が未定の銘柄は除外します。")
-
-st.markdown("**カレンダーに表示する予定**")
-kind_column1, kind_column2, kind_column3, kind_column4 = st.columns(4)
-show_bookbuilding = kind_column1.checkbox("ブックビルディング", value=True)
-show_purchase = kind_column2.checkbox("購入申込", value=True)
-show_price_decision = kind_column3.checkbox("抽選・価格決定", value=True)
-show_listing = kind_column4.checkbox("上場日", value=True)
+with st.sidebar:
+    st.header("絞り込み")
+    selected_fund_label = st.selectbox("カレンダー：100株の必要資金", list(fund_limits))
+    selected_fund_limit = fund_limits[selected_fund_label]
+    if selected_fund_limit is not None:
+        st.caption("価格が未定の銘柄は除外します。")
+    st.markdown("**カレンダーに表示する予定**")
+    show_bookbuilding = st.checkbox("ブックビルディング", value=True)
+    show_purchase = st.checkbox("購入申込", value=True)
+    show_price_decision = st.checkbox("抽選・価格決定", value=True)
+    show_listing = st.checkbox("上場日", value=True)
 enabled_event_kinds = set()
 if show_bookbuilding:
     enabled_event_kinds.add("需要申告")
@@ -389,4 +377,3 @@ render_ipo_performance(rakuten["items"], year, month)
 
 st.divider()
 st.caption("情報源: 楽天証券公式IPO一覧。日程・取扱いは変更される場合があります。投資判断を示すものではありません。")
-st.link_button("楽天証券 IPOページを開く", RAKUTEN_IPO_URL)

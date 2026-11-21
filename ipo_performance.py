@@ -1,4 +1,4 @@
-"""IPOの公開価格と初値を、出典確認済みCSVから集計する。"""
+"""IPOの公開価格と初値を、確認済みCSVから集計する。"""
 
 import csv
 from datetime import date, datetime, timedelta, timezone
@@ -86,20 +86,42 @@ def render_ipo_performance(rakuten_items, year, month):
     for warning in warnings[:5]:
         st.warning(warning)
 
-    st.caption("初値は出典URLで確認した公開情報を表示しています。未確認の価格は推測せず『未取得』と表示します。")
+    st.caption("確認できない価格は推測せず『未取得』と表示します。")
 
     rows = _merged_rows(records, rakuten_items)
     if not rows:
         st.info("表示できるIPOデータがありません。")
         return
-    selected_month = f"{year:04d}-{month:02d}"
-    st.markdown(f"**集計対象：{year}年{month}月に上場した銘柄**")
-    limits = {"5万円以下": 50_000, "10万円以下": 100_000, "20万円以下": 200_000,
-              "30万円以下": 300_000, "50万円以下": 500_000, "制限なし": None}
-    selected_limit = limits[st.selectbox("100株の購入資金", list(limits), index=5,
-                                         key="ipo_perf_budget")]
+    with st.sidebar:
+        st.divider()
+        st.subheader("実績分析")
+        period_mode = st.segmented_control(
+            "集計期間",
+            ["月間", "半年", "年間"],
+            default="月間",
+            key="ipo_perf_period",
+        ) or "月間"
+        limits = {"5万円以下": 50_000, "10万円以下": 100_000, "20万円以下": 200_000,
+                  "30万円以下": 300_000, "50万円以下": 500_000, "制限なし": None}
+        selected_limit = limits[st.selectbox("100株の購入資金", list(limits), index=5,
+                                             key="ipo_perf_budget")]
+    if period_mode == "年間":
+        period_start, period_end = date(year, 1, 1), date(year, 12, 31)
+        period_label = f"{year}年"
+    elif period_mode == "半年":
+        start_month = 1 if month <= 6 else 7
+        end_month = start_month + 5
+        period_start = date(year, start_month, 1)
+        period_end = date(year, end_month, 30 if end_month in (6, 9) else 31)
+        period_label = f"{year}年{'上半期（1～6月）' if start_month == 1 else '下半期（7～12月）'}"
+    else:
+        period_start = date(year, month, 1)
+        next_month = date(year + (month == 12), 1 if month == 12 else month + 1, 1)
+        period_end = next_month - timedelta(days=1)
+        period_label = f"{year}年{month}月"
+    st.markdown(f"**集計対象：{period_label}に上場した銘柄**")
     today = datetime.now(JST).date()
-    candidates = [row for row in rows if row["listing_date"].strftime("%Y-%m") == selected_month
+    candidates = [row for row in rows if period_start <= row["listing_date"] <= period_end
                   and row["listing_date"] <= today
                   and row["lot_size"] == 100
                   and (selected_limit is None or
@@ -151,10 +173,8 @@ def render_ipo_performance(rakuten_items, year, month):
                       "公開価格": f"{offer:,}円" if offer is not None else "未取得",
                       "初値": f"{first:,}円" if first is not None else "未取得",
                       "上昇率": f"{diff / offer * 100:+.2f}%" if diff is not None else "未取得",
-                      "100株当たりの損益": f"{diff * 100:+,}円" if diff is not None else "未取得",
-                      "出典": row["source_url"]})
+                      "100株当たりの損益": f"{diff * 100:+,}円" if diff is not None else "未取得"})
     st.markdown("#### 銘柄別の初値実績")
-    st.dataframe(table, hide_index=True, width="stretch",
-                 column_config={"出典": st.column_config.LinkColumn("出典")})
+    st.dataframe(table, hide_index=True, width="stretch")
     missing = len(candidates) - len(confirmed)
     st.caption(f"確認済みデータだけで割合を計算しています。未取得は{missing}銘柄です。")
