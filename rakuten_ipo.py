@@ -19,6 +19,7 @@ def _date(value):
 
 
 def _convert(row):
+    """楽天証券独自の項目名を、アプリ内で分かりやすい名前へ変換する。"""
     return {
         "code": str(row.get("code", "")).strip(),
         "company": str(row.get("data1", "")).strip(),
@@ -59,14 +60,17 @@ def _fresh(cache, now):
 
 
 def load_rakuten_ipos(force_refresh=False):
+    """楽天証券のIPO一覧を読み込み、取得結果と更新状態を返す。"""
     now = datetime.now(JST)
     cache = _read_cache()
+    # 24時間以内に取得済みなら、外部サイトへ接続せず保存データを使う。
     if not force_refresh and _fresh(cache, now):
         return {**cache, "updated": False, "error": ""}
     try:
         request = Request(RAKUTEN_IPO_JSON_URL, headers={"User-Agent": "Mozilla/5.0 IPO calendar/1.0"})
         with urlopen(request, timeout=30) as response:
             rows = json.load(response)
+        # 証券コードと上場日が確認できるデータだけを採用する。
         items = [_convert(row) for row in rows if row.get("code") and row.get("data18")]
         if not items:
             raise ValueError("楽天証券の取扱IPOを読み取れませんでした。")
@@ -76,6 +80,7 @@ def load_rakuten_ipos(force_refresh=False):
         temporary.replace(CACHE_PATH)
         return {**payload, "updated": True, "error": ""}
     except Exception as error:
+        # 通信に失敗してもアプリを止めず、前回の保存データを表示する。
         if cache:
             return {**cache, "updated": False, "error": str(error)}
         return {"checked_at": "", "items": [], "updated": False, "error": str(error)}

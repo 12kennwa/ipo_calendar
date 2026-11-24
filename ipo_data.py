@@ -81,6 +81,7 @@ def _iso_date(value):
 
 
 def parse_jpx_ipo_html(html):
+    """JPXの表から、上場日・企業名・市場など必要な項目だけを取り出す。"""
     parser = _JPXTableParser()
     parser.feed(html)
     items = []
@@ -114,6 +115,7 @@ def _read_cache():
     if not CACHE_PATH.exists():
         return None
     try:
+        # 保存データが古い場合だけJPXを確認し、正常なら保存し直す。
         return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
@@ -153,6 +155,7 @@ def load_ipo_data(force_refresh=False):
         temporary.replace(CACHE_PATH)
         return {**payload, "updated": True, "error": ""}
     except Exception as error:
+        # JPXを取得できない場合は、最後に正常取得できた内容を返す。
         if cache:
             return {**cache, "updated": False, "error": str(error)}
         return {"checked_at": "", "source": JPX_IPO_URL, "items": [], "updated": False, "error": str(error)}

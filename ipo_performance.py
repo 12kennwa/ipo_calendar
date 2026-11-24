@@ -37,6 +37,7 @@ def load_first_prices():
             reader = csv.DictReader(file)
             if not set(FIELDS).issubset(reader.fieldnames or []):
                 return [], ["CSVの列名が正しくありません。"]
+            # 1行ずつ検査し、壊れた行があっても全体を停止させない。
             for line, row in enumerate(reader, start=2):
                 if not any(str(value or "").strip() for value in row.values()):
                     continue
@@ -80,6 +81,7 @@ def _merged_rows(records, rakuten_items):
 
 
 def render_ipo_performance(rakuten_items, year, month):
+    """期間と予算で実績を絞り、上昇割合と銘柄別損益を画面表示する。"""
     st.subheader("📊 IPO過去実績分析")
     st.caption("公開価格で100株購入し、最初に売買が成立した価格で売却できたと仮定した集計です。税金・手数料は含みません。")
     records, warnings = load_first_prices()
@@ -126,6 +128,7 @@ def render_ipo_performance(rakuten_items, year, month):
                   and row["lot_size"] == 100
                   and (selected_limit is None or
                        row["offer_price"] is not None and row["offer_price"] * 100 <= selected_limit)]
+    # 公開価格と初値の両方を確認できた銘柄だけを割合計算に使う。
     confirmed = [row for row in candidates if row["offer_price"] is not None and row["first_price"] is not None]
     rising = sum(row["first_price"] > row["offer_price"] for row in confirmed)
     falling = sum(row["first_price"] < row["offer_price"] for row in confirmed)
@@ -168,6 +171,7 @@ def render_ipo_performance(rakuten_items, year, month):
     table = []
     for row in sorted(candidates, key=lambda item: item["listing_date"]):
         offer, first = row["offer_price"], row["first_price"]
+        # 1株の値幅を求め、表示時に100倍して100株分の損益にする。
         diff = first - offer if offer is not None and first is not None else None
         table.append({"銘柄名": row["company"], "上場日": row["listing_date"].isoformat(),
                       "公開価格": f"{offer:,}円" if offer is not None else "未取得",

@@ -7,22 +7,26 @@ import re
 
 import streamlit as st
 
-from calendar_notifications import build_notification_calendar
+# 画面表示以外の処理は、役割ごとに別ファイルへ分けている。
+# app.pyはそれらを呼び出し、1つの画面にまとめる司令塔にあたる。
 from ipo_data import load_ipo_data
 from ipo_performance import render_ipo_performance
 from ipo_reference_prices import REFERENCE_PRICES
 from rakuten_ipo import load_rakuten_ipos
 
 
+# 日付の文字列をdate型へ変換する。空欄ならNoneを返す。
 def parse_date(value):
     return date.fromisoformat(value) if value else None
 
 
+# 指定した日付が、選択中の年・月に含まれるか判定する。
 def in_month(value, year, month):
     parsed = parse_date(value)
     return bool(parsed and parsed.year == year and parsed.month == month)
 
 
+# 開始日～終了日の期間が、選択中の月と1日でも重なるか判定する。
 def period_overlaps(start_value, end_value, year, month):
     start = parse_date(start_value)
     end = parse_date(end_value)
@@ -33,6 +37,7 @@ def period_overlaps(start_value, end_value, year, month):
     return start <= month_end and end >= month_start
 
 
+# 今日の日付を基準に、受付中・開始前・終了の状態文を作る。
 def current_status(item, today_value):
     bb_start, bb_end = parse_date(item["bookbuilding_start"]), parse_date(item["bookbuilding_end"])
     purchase_start, purchase_end = parse_date(item["purchase_start"]), parse_date(item["purchase_end"])
@@ -47,8 +52,10 @@ def current_status(item, today_value):
     return "受付期間終了"
 
 
+# 公開価格、仮条件上限、想定価格の順で100株の必要資金を計算する。
 def required_funds(item):
     """公開価格、なければ仮条件上限から100株分の必要資金を返す。"""
+    # 確定している価格を優先し、不明な価格をAIなどで推測しない。
     offer_values = [int(value.replace(",", "")) for value in re.findall(r"\d[\d,]*", item.get("offer_price", ""))]
     if offer_values:
         return offer_values[-1] * 100, "公開価格"
@@ -61,6 +68,7 @@ def required_funds(item):
     return None, "価格未定"
 
 
+# IPO一覧を受け取り、期間を色付きの横棒にした月間カレンダーを表示する。
 def render_calendar(items, year, month, today_value, enabled_event_kinds, selected_code=""):
     """期間を週ごとの横棒でつないだ月間カレンダーを描画する。"""
     month_start = date(year, month, 1)
@@ -73,6 +81,7 @@ def render_calendar(items, year, month, today_value, enabled_event_kinds, select
         "上場": ("#2563eb", "#eaf2ff"),
     }
 
+    # 1件の日程を、表示対象月の範囲に収めてeventsへ追加する内部関数。
     def add_event(item, kind, start_value, end_value=None):
         if kind not in enabled_event_kinds:
             return
@@ -90,6 +99,7 @@ def render_calendar(items, year, month, today_value, enabled_event_kinds, select
             "background": colors[kind][1],
         })
 
+    # 1社につき、申込期間・価格決定日・上場日を別々の予定として登録する。
     for item in items:
         add_event(item, "需要申告", item["bookbuilding_start"], item["bookbuilding_end"])
         add_event(item, "購入申込", item["purchase_start"], item["purchase_end"])
@@ -128,6 +138,7 @@ def render_calendar(items, year, month, today_value, enabled_event_kinds, select
                                  "column_end": (end - week_start).days + 1})
         segments.sort(key=lambda event: (event["column_start"], event["column_end"], event["kind"]))
 
+        # 同じ日に複数の予定があるときは、横棒が重ならない段へ配置する。
         lane_ends = []
         for segment in segments:
             lane = next((index for index, last_column in enumerate(lane_ends)
@@ -164,6 +175,7 @@ def render_calendar(items, year, month, today_value, enabled_event_kinds, select
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
+# カレンダーで押した会社の詳しい情報を、同じページの下部に表示する。
 def render_detail_cards(items, today_value):
     """カレンダーから同じ画面内で開くIPO詳細カードを描画する。"""
     parts = ["""
@@ -214,7 +226,10 @@ def render_detail_cards(items, today_value):
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
+# ===== ここから下が、ブラウザへ画面を表示するメイン処理 =====
+# ページ名・アイコン・横幅を設定する。
 st.set_page_config(page_title="IPOスケジュールナビ", page_icon="🗓️", layout="wide")
+# アプリ全体の色・余白・スマートフォン表示をCSSで設定する。
 st.markdown(
     """
     <style>
@@ -247,22 +262,16 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+# 画面上部へタイトルと説明文を表示する。
 st.title("🗓️ IPOスケジュールナビ")
 st.caption("楽天証券で取り扱う日本株IPOだけを表示します。公式データを1日1回確認します。")
 
+# 楽天証券のIPO一覧を取得する。24時間以内の保存データがあれば再利用する。
 rakuten = load_rakuten_ipos(force_refresh=False)
-with st.expander("🔔 iPhoneへIPO通知を追加"):
-    st.write("ブックビルディング、価格決定、購入申込、上場日の各日程を登録し、前日と当日の朝9時に通知します。")
-    st.download_button(
-        "通知カレンダーをダウンロード",
-        data=build_notification_calendar(rakuten["items"]),
-        file_name="rakuten_ipo_notifications.ics",
-        mime="text/calendar",
-        width="stretch",
-    )
-    st.caption("iPhoneでダウンロードしたファイルを開き、『すべて追加』を押してください。新しいIPOが増えたら、もう一度追加してください。")
+# JPX情報を取得し、証券コードをキーにして楽天証券データへ補足情報を加える。
 jpx = load_ipo_data(force_refresh=False)
 jpx_by_code = {item["code"]: item for item in jpx["items"]}
+# 楽天証券の各銘柄へ、同じ証券コードのJPX情報と想定価格を追加する。
 items = []
 for row in rakuten["items"]:
     jpx_item = jpx_by_code.get(row["code"], {})
@@ -274,12 +283,15 @@ for row in rakuten["items"]:
         "reference_price": REFERENCE_PRICES.get(row["code"], {}),
     })
 
+# 最新情報の取得結果に応じて、警告または成功メッセージを表示する。
 if rakuten["error"]:
     st.warning(f"楽天証券の確認に失敗したため、保存済みデータを表示しています。\n\n{rakuten['error']}")
 elif rakuten["updated"]:
     st.success("楽天証券の最新IPO一覧を取得しました。")
 
+# 今日の日付を、受付状況や過去実績の判定に使用する。
 today = date.today()
+# データに存在する年月だけを、画面上の月選択候補にする。
 months = set()
 for item in items:
     for key in ("bookbuilding_start", "bookbuilding_end", "price_decision_date", "purchase_start", "purchase_end", "listing_date"):
@@ -290,6 +302,7 @@ default_month = today.strftime("%Y-%m")
 if default_month not in months:
     default_month = next((value for value in months if value > default_month), months[-1])
 
+# 前月・翌月ボタンと、表示月の選択欄を作る。
 st.markdown("### 表示設定")
 if st.session_state.get("calendar_month") not in months:
     st.session_state.calendar_month = default_month
@@ -312,6 +325,7 @@ with month_column:
     )
 year, month = map(int, selected_month.split("-"))
 
+# 画面に表示する選択肢と、実際に比較する上限金額を対応させる。
 fund_limits = {
     "制限なし": None,
     "10万円以下": 100_000,
@@ -320,6 +334,7 @@ fund_limits = {
     "50万円以下": 500_000,
     "100万円以下": 1_000_000,
 }
+# サイドバーへ購入予算と表示イベントの絞り込みを配置する。
 with st.sidebar:
     st.header("絞り込み")
     selected_fund_label = st.selectbox("カレンダー：100株の必要資金", list(fund_limits))
@@ -331,6 +346,7 @@ with st.sidebar:
     show_purchase = st.checkbox("購入申込", value=True)
     show_price_decision = st.checkbox("抽選・価格決定", value=True)
     show_listing = st.checkbox("上場日", value=True)
+# チェックが入った予定だけを、カレンダーへ渡す集合に入れる。
 enabled_event_kinds = set()
 if show_bookbuilding:
     enabled_event_kinds.add("需要申告")
@@ -341,6 +357,7 @@ if show_price_decision:
 if show_listing:
     enabled_event_kinds.add("上場")
 
+# 選択した月・イベント期間・購入資金の条件をすべて満たす銘柄だけを残す。
 visible = [
     item for item in items
     if (
@@ -355,6 +372,7 @@ visible = [
     )
 ]
 
+# 絞り込み後の件数、保存銘柄数、最終確認日時を表示する。
 metric1, metric2, metric3 = st.columns(3)
 metric1.metric("この月の取扱IPO", f"{len(visible)}社")
 metric2.metric("楽天証券の保存銘柄", f"{len(items)}社")
@@ -362,8 +380,10 @@ metric3.metric("最終確認", rakuten["checked_at"][:16].replace("T", " ") if r
 
 st.markdown("🟠 ブックビルディング　🟢 購入申込　🟣 抽選・価格決定　🔵 上場")
 st.subheader(f"{year}年{month}月")
+# 絞り込み後のIPOだけをカレンダーへ渡す。
 render_calendar(visible, year, month, today, enabled_event_kinds)
 
+# カレンダーで選んだ銘柄の詳細表示欄を作る。
 st.divider()
 st.markdown('<div id="ipo-details"></div>', unsafe_allow_html=True)
 st.subheader("選択したIPOの詳細")
@@ -373,6 +393,7 @@ if visible:
     render_detail_cards(visible, today)
 
 st.divider()
+# 過去の公開価格と初値を使った実績分析は、別ファイルへ任せる。
 render_ipo_performance(rakuten["items"], year, month)
 
 st.divider()
